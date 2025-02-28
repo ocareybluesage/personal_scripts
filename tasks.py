@@ -7,40 +7,64 @@ COST_DIR = "./costs"
 
 
 @task
-def analyze_account_data(_, head: str = "3"):
-    head = int(head)
-    top_columns = [str(i) for i in range(1, head + 1)]
+def analyze_account_data(_):
 
-    output: DataFrame = pd.DataFrame(columns=['client','Month'] + top_columns)
+    columns = [
+        "Most Expensive AWS Service",
+        "Largest Cost",
+        "Second Most Expensive AWS Service",
+        "Second Largest Cost",
+        "Third Most Expensive AWS Service",
+        "Third Largest Cost",
+    ]
+
+    output: DataFrame = pd.DataFrame(columns=["client", "Month"] + columns)
 
     for file_name in [f for f in listdir(COST_DIR)]:
+        client = file_name.split(".csv")[0]
         df: DataFrame = pd.read_csv(f"{COST_DIR}/{file_name}", index_col=False)
         df = df.drop(index=[0])
         df = df.drop(["Tax($)", "Total costs($)"], axis=1)
         df = df.rename(columns={"Service": "Month"})
         df = df.melt(id_vars=["Month"], var_name="Service", value_name="Cost")
 
-        df_top = (
+        df["Service"] = df["Service"].apply(lambda x: x.replace("($)", ""))
+        df["Cost"] = df["Cost"].fillna(0)
+        df["Cost"] = df["Cost"].apply(lambda x: round(x, 2))
+
+        df = (
             df.sort_values(["Month", "Cost"], ascending=[True, False])
             .groupby("Month")
-            .head(head)
+            .head(3)
         )
 
-        df_top[f"Top {head} Costs"] = df_top["Service"] + ": " + df_top["Cost"].astype(str)
-        df = df_top[["Month", f"Top {head} Costs"]]
+        df["Rank"] = df.groupby("Month").cumcount() + 1
+        df = df.pivot(index="Month", columns="Rank", values=["Service", "Cost"])
 
-        df_grouped = df.groupby("Month")[f"Top {head} Costs"].agg(list).reset_index()
-        df_expanded = df_grouped[f"Top {head} Costs"].apply(lambda x: pd.Series(x[:head]))
+        df.columns = [f"{col[0]}_{col[1]}" for col in df.columns]
 
-        df_expanded.columns = top_columns
+        column_order = []
+        [column_order.extend([f"Service_{i}", f"Cost_{i}"]) for i in range(1, 4)]
+        df = df[column_order]
 
-        df_final = pd.concat([df_grouped["Month"], df_expanded], axis=1)
-        df_final.insert(0, 'client', file_name.split('.csv')[0])
+        df = df.rename(
+            columns={
+                "Service_1": "Most Expensive AWS Service",
+                "Cost_1": "Largest Cost",
+                "Service_2": "Second Most Expensive AWS Service",
+                "Cost_2": "Second Largest Cost",
+                "Service_3": "Third Most Expensive AWS Service",
+                "Cost_3": "Third Largest Cost",
+            }
+        )
 
-        print(f"----------------- {file_name.split('.csv')[0]} -----------------")
-        print(df_final)
+        df = df.reset_index()
+        df.insert(0, "client", client)
+
+        print(f"----------------- {client} -----------------")
+        print(df)
         print("\n")
 
-        output = pd.concat([output, df_final], ignore_index=True)
+        output = pd.concat([output, df], ignore_index=True)
 
     output.to_csv("output.csv", index=False)
